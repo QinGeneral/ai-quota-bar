@@ -1,0 +1,26 @@
+name: 构建 macOS App
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 编译并运行自检
+        run: make test
+
+      - name: 打包
+        run: ditto -c -k --keepParent QuotaBar.app QuotaBar-macos.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QuotaBar-macos
+          path: QuotaBar-macos.zip
+          if-no-files-found: error
+          retention-days: 90
