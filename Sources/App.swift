@@ -42,6 +42,7 @@ final class OnceRunner: NSObject, NSApplicationDelegate {
                             "label": meter.label,
                             "remaining": UsageFormat.percent(meter.remainingPercent),
                             "reset": meter.resetAt.map { UsageFormat.resetText($0) } ?? "",
+                            "footnote": meter.footnote ?? "",
                         ]
                     },
                 ]

@@ -14,7 +14,7 @@
 
 - Cursor、Grok Bot：读取 Cursor 本地登录，再查询各自的用量。Grok Bot 用的是它自己的每周额度，和 Cursor 的月度额度分开。
 - Codex：读取 `~/.codex/auth.json`，再查询 Codex 的额度窗口。
-- Kimi：优先用还没过期的 Kimi Code 登录；否则用 Kimi 桌面版已经保存的密钥。不会刷新或改写这些登录。
+- Kimi：优先用还没过期的 Kimi Code 登录；否则用 Kimi 桌面版已经保存的密钥。赠送额度另外读桌面版里还没过期的网页登录，Kimi 开着才会更新。不会刷新或改写这些登录。
 
 第一次打开时，系统会询问是否允许读取钥匙串里的「Cursor Safe Storage」。选**始终允许**，之后刷新就不会再弹窗。
 

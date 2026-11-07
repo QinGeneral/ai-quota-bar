@@ -80,6 +80,14 @@ enum UsageFormat {
         return formatter.string(from: date) + " 重置"
     }
 
+    static func expiryText(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = .current
+        formatter.dateFormat = "M月d日 HH:mm"
+        return formatter.string(from: date) + " 到期"
+    }
+
     static func planName(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
         switch raw.lowercased() {
@@ -305,6 +313,45 @@ enum UsageParsers {
         }
         let plan = UsageFormat.planName(planHint) ?? kimiMembershipName(membership)
         return ProviderReading(name: "Kimi", plan: plan, meters: meters, notes: [], error: nil)
+    }
+
+    /// 会员统计里的赠送额度。`amountUsedRatio` 是已用比例，过期的不再显示。
+    static func kimiGifts(_ json: [String: Any], now: Date = Date()) -> [Meter] {
+        guard let items = json["giftBalances"] as? [Any] else { return [] }
+        struct Gift {
+            var name: String?
+            var remainingPercent: Double
+            var expiry: Date?
+        }
+        var gifts: [Gift] = []
+        for item in items {
+            guard let gift = JSONValue.object(item) else { continue }
+            if let type = JSONValue.string(gift["type"]), type != "GIFT" { continue }
+            guard let used = JSONValue.quantity(gift["amountUsedRatio"]) else { continue }
+            let expiry = JSONValue.date(gift["expireTime"])
+            if let expiry, expiry <= now { continue }
+            let usedPercent = min(100, max(0, used <= 1 ? used * 100 : used))
+            let name = JSONValue.string(gift["displayName"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+            gifts.append(Gift(
+                name: (name?.isEmpty == false) ? name : nil,
+                remainingPercent: UsageFormat.remaining(usedPercent: usedPercent),
+                expiry: expiry))
+        }
+        return gifts.map { gift in
+            var parts: [String] = []
+            if gifts.count == 1, let name = gift.name, name != "赠送" {
+                parts.append(name)
+            }
+            if let expiry = gift.expiry {
+                parts.append(UsageFormat.expiryText(expiry))
+            }
+            let label = gifts.count > 1 ? (gift.name ?? "赠送") : "赠送"
+            return Meter(
+                label: label,
+                remainingPercent: gift.remainingPercent,
+                resetAt: nil,
+                footnote: parts.isEmpty ? nil : parts.joined(separator: "，"))
+        }
     }
 
     private static func kimiCountMeter(label: String, detail: [String: Any]) -> (meter: Meter, hollow: Bool)? {

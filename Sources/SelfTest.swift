@@ -124,6 +124,38 @@ func runSelfTest() -> Int32 {
     check("kimi drops hollow window", kimiDesktop.meters.map(\.label) == ["额度"])
     check("kimi total remaining", kimiDesktop.meters.first.map { UsageFormat.percent($0.remainingPercent) } == "43%")
 
+    let giftNow = ISO8601DateFormatter().date(from: "2026-11-07T12:00:00Z") ?? Date()
+    let gifts = UsageParsers.kimiGifts([
+        "giftBalances": [
+            [
+                "type": "GIFT",
+                "displayName": "预约用户专属加赠",
+                "amountUsedRatio": 0.234,
+                "expireTime": "2026-11-25T00:00:00Z",
+            ],
+            [
+                "type": "GIFT",
+                "displayName": "Expired grant",
+                "amountUsedRatio": 0,
+                "expireTime": "2026-10-20T00:00:00Z",
+            ],
+            ["type": "OTHER", "displayName": "不是赠送", "amountUsedRatio": 0.1],
+        ],
+    ], now: giftNow)
+    let giftExpiry = JSONValue.date("2026-11-25T00:00:00Z")
+    check("kimi gift label", gifts.map(\.label) == ["赠送"])
+    check("kimi gift remaining", gifts.first.map { UsageFormat.percent($0.remainingPercent) } == "76.6%")
+    check("kimi gift footnote", gifts.first?.footnote == ["预约用户专属加赠", giftExpiry.map(UsageFormat.expiryText)].compactMap { $0 }.joined(separator: "，"))
+
+    let twoGifts = UsageParsers.kimiGifts([
+        "giftBalances": [
+            ["displayName": "邀请奖励", "amountUsedRatio": "0.5"],
+            ["amountUsedRatio": 0],
+        ],
+    ], now: giftNow)
+    check("kimi gift names", twoGifts.map(\.label) == ["邀请奖励", "赠送"])
+    check("kimi gift string ratio", twoGifts.first.map { UsageFormat.percent($0.remainingPercent) } == "50%")
+
     if failed == 0 {
         print("self-test passed")
         return 0

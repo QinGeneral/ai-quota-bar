@@ -266,6 +266,7 @@ struct UsageService {
     }
 
     private func fetchKimi() async -> ProviderReading {
+        async let gifts = fetchKimiGifts()
         do {
             let login = try loadKimiLogin()
             var payloads: [[String: Any]] = []
@@ -281,6 +282,10 @@ struct UsageService {
                 }
             }
             guard !payloads.isEmpty else {
+                let giftMeters = await gifts
+                if !giftMeters.isEmpty {
+                    return ProviderReading(name: "Kimi", plan: nil, meters: giftMeters, notes: [], error: nil)
+                }
                 return .failed("Kimi", sawUnauthorized ? "登录已过期，请打开 Kimi 或运行一次 kimi" : "用量接口暂时不可用")
             }
             var planHint: String?
@@ -293,12 +298,50 @@ struct UsageService {
                     planHint = JSONValue.string(json["user_level_name"])
                 }
             }
-            return UsageParsers.kimi(payloads, planHint: planHint)
+            var reading = UsageParsers.kimi(payloads, planHint: planHint)
+            let giftMeters = await gifts
+            if reading.meters.isEmpty {
+                guard !giftMeters.isEmpty else { return reading }
+                return ProviderReading(name: "Kimi", plan: reading.plan, meters: giftMeters, notes: [], error: nil)
+            }
+            reading.meters.append(contentsOf: giftMeters)
+            return reading
         } catch let error as ServiceError {
+            let giftMeters = await gifts
+            if !giftMeters.isEmpty {
+                return ProviderReading(name: "Kimi", plan: nil, meters: giftMeters, notes: [], error: nil)
+            }
             return .failed("Kimi", error.description)
         } catch {
+            let giftMeters = await gifts
+            if !giftMeters.isEmpty {
+                return ProviderReading(name: "Kimi", plan: nil, meters: giftMeters, notes: [], error: nil)
+            }
             return .failed("Kimi", "网络请求失败")
         }
+    }
+
+    /// 赠送额度在网页会员统计里，不在 Code 用量接口。只读桌面版还没过期的网页登录，不刷新 token。
+    private func fetchKimiGifts() async -> [Meter] {
+        guard let web = freshKimiWebAccessToken(),
+              let url = kimiMembershipURL(region: web.region, path: "apiv2/kimi.gateway.membership.v2.MembershipService/GetSubscriptionStats"),
+              let host = URL(string: url)?.host else { return [] }
+        let headers = [
+            "Authorization": "Bearer \(web.token)",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Cookie": "kimi-auth=\(web.token)",
+            "Origin": "https://\(host)",
+            "Referer": "https://\(host)/code/console",
+            "connect-protocol-version": "1",
+            "x-language": "zh-CN",
+            "x-msh-platform": "web",
+            "r-timezone": TimeZone.current.identifier,
+        ]
+        guard let (status, data) = try? await post(url, headers: headers, body: Data("{}".utf8)),
+              status == 200,
+              let json = JSONValue.object(data) else { return [] }
+        return UsageParsers.kimiGifts(json)
     }
 
     /// 只读本地登录。不刷新 Kimi 的 refresh token，避免把 CLI 或桌面版的会话轮换掉。
@@ -368,6 +411,39 @@ struct UsageService {
         return "https://api.kimi.com/coding/v1"
     }
 
+    private func freshKimiWebAccessToken() -> (token: String, region: String?)? {
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/kimi-desktop")
+        guard let json = readJSON(root.appendingPathComponent("daimon-share/daimon/config.json")),
+              let credentials = JSONValue.object(json["credentials"]),
+              let web = JSONValue.object(credentials["kimiWeb"]),
+              let token = JSONValue.string(web["accessToken"])?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !token.isEmpty,
+              let expiry = jwtExpiry(token),
+              expiry > Date().addingTimeInterval(60) else { return nil }
+        let region = JSONValue.string(readJSON(root.appendingPathComponent("bridge-store/region.json"))?["lastEffective"])
+        return (token, region)
+    }
+
+    private func kimiMembershipURL(region: String?, path: String) -> String? {
+        let value = (region ?? "").lowercased()
+        let host = value.contains("international") || value.contains("overseas") || value == "global"
+            ? "www.kimi.ai" : "www.kimi.com"
+        return "https://\(host)/\(path)"
+    }
+
+    private func jwtExpiry(_ token: String) -> Date? {
+        let parts = token.split(separator: ".")
+        guard parts.count >= 2 else { return nil }
+        var payload = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        let padding = (4 - payload.count % 4) % 4
+        payload += String(repeating: "=", count: padding)
+        guard let data = Data(base64Encoded: payload),
+              let json = JSONValue.object(data),
+              let exp = JSONValue.quantity(json["exp"]) else { return nil }
+        return Date(timeIntervalSince1970: exp)
+    }
+
     private func kimiUsageURL(_ baseURL: String) -> String? {
         guard let components = URLComponents(string: baseURL),
               let host = components.host?.lowercased(),
@@ -388,6 +464,14 @@ struct UsageService {
     private func get(_ url: String, headers: [String: String]) async throws -> (Int, Data) {
         var request = URLRequest(url: URL(string: url)!)
         request.httpMethod = "GET"
+        headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
+        return try await send(request)
+    }
+
+    private func post(_ url: String, headers: [String: String], body: Data) async throws -> (Int, Data) {
+        var request = URLRequest(url: URL(string: url)!)
+        request.httpMethod = "POST"
+        request.httpBody = body
         headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
         return try await send(request)
     }
